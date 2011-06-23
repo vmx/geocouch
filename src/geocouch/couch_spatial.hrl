@@ -48,6 +48,7 @@
     seq=0,
     purge_seq=0,
     id_btree_state=nil, % pointer/position in file to back-index
+    % 3-tuple with treepos, update_seq and purge_seq
     index_states=nil, % pointers/positions to the indexes
     disk_version = ?LATEST_SPATIAL_DISK_VERSION
 }).
