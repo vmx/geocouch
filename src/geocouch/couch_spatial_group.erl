@@ -468,8 +468,14 @@ get_group_info(State) ->
         sig = GroupSig,
         def_lang = Lang,
         current_seq=CurrentSeq,
-        purge_seq=PurgeSeq
+        purge_seq=PurgeSeq,
+        indexes=Indexes
     } = Group,
+    NamesAndMbr = lists:map(
+            fun(#spatial{treepos=Treepos, index_names=Names}) ->
+        {ok, {Mbr, _, _}} = couch_file:pread_term(Fd, Treepos),
+        [{N, tuple_to_list(Mbr)} || N <- Names]
+    end, Indexes),
     {ok, Size} = couch_file:bytes(Fd),
     [
         {signature, ?l2b(couch_util:to_hex(?b2l(GroupSig)))},
@@ -480,7 +486,8 @@ get_group_info(State) ->
         {waiting_commit, WaitingCommit},
         {waiting_clients, length(WaitersList)},
         {update_seq, CurrentSeq},
-        {purge_seq, PurgeSeq}
+        {purge_seq, PurgeSeq},
+        {indexes, {lists:flatten(NamesAndMbr)}}
     ].
 
 reset_group(#spatial_group{indexes=Indexes}=Group) ->
