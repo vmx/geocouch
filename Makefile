@@ -39,3 +39,14 @@ geocouch-$(VERSION).tar.gz:
 	git archive --prefix=geocouch-$(VERSION)/ --format tar HEAD | gzip -9vc > $@
 
 dist: geocouch-$(VERSION).tar.gz
+
+
+install:
+#	$(MAKE) -C geocouch COUCH_SRC=../couchdb/src/couchdb
+	mkdir -p $(DESTDIR)$(PREFIX)/lib/couchdb/plugins/geocouch/ebin
+	cp -r build/* $(DESTDIR)$(PREFIX)/lib/couchdb/plugins/geocouch/ebin
+	mkdir -p $(DESTDIR)$(PREFIX)/etc/couchdb/local.d
+	cp -r etc/couchdb/local.d/* $(DESTDIR)$(PREFIX)/etc/couchdb/local.d
+	mkdir -p $(DESTDIR)$(PREFIX)/share/couchdb/www/script/test
+	cp -r share/www/script/test/* $(DESTDIR)$(PREFIX)/share/couchdb/www/script/test
+

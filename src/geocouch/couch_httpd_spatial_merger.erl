@@ -12,7 +12,7 @@
 
 -module(couch_httpd_spatial_merger).
 
--export([handle_req/1, apply_http_config/3]).
+-export([handle_req/1]).
 
 -include("couch_db.hrl").
 -include("couch_merger.hrl").
@@ -28,29 +28,13 @@
     qs_json_value/3
 ]).
 
--record(sender_acc, {
-    req = nil,
-    resp = nil,
-    on_error,
-    acc = <<>>,
-    error_acc = []
-}).
-
-
-setup_http_sender(MergeParams, Req) ->
-    MergeParams#index_merge{
-        user_acc = #sender_acc{
-            req = Req, on_error = MergeParams#index_merge.on_error
-        },
-        callback = fun http_sender/2
-    }.
 
 handle_req(#httpd{method = 'GET'} = Req) ->
     Indexes = validate_spatial_param(qs_json_value(Req, "spatial", nil)),
     MergeParams0 = #index_merge{
         indexes = Indexes
     },
-    MergeParams1 = apply_http_config(Req, [], MergeParams0),
+    MergeParams1 = couch_httpd_view_merger:apply_http_config(Req, [], MergeParams0),
     couch_merger:query_index(couch_spatial_merger, Req, MergeParams1);
 
 handle_req(#httpd{method = 'POST'} = Req) ->
@@ -60,116 +44,11 @@ handle_req(#httpd{method = 'POST'} = Req) ->
     MergeParams0 = #index_merge{
         indexes = Indexes
     },
-    MergeParams1 = apply_http_config(Req, Props, MergeParams0),
+    MergeParams1 = couch_httpd_view_merger:apply_http_config(Req, Props, MergeParams0),
     couch_merger:query_index(couch_spatial_merger, Req, MergeParams1);
 
 handle_req(Req) ->
     couch_httpd:send_method_not_allowed(Req, "GET,POST").
-
-
-apply_http_config(Req, Body, MergeParams) ->
-    DefConnTimeout = MergeParams#index_merge.conn_timeout,
-    ConnTimeout = case get_value(<<"connection_timeout">>, Body, nil) of
-    nil ->
-        qs_json_value(Req, "connection_timeout", DefConnTimeout);
-    T when is_integer(T) ->
-        T
-    end,
-    OnError = case get_value(<<"on_error">>, Body, nil) of
-    nil ->
-       qs_json_value(Req, "on_error", <<"continue">>);
-    Policy when is_binary(Policy) ->
-       Policy
-    end,
-    setup_http_sender(MergeParams#index_merge{
-        conn_timeout = ConnTimeout,
-        on_error = validate_on_error_param(OnError)
-    }, Req).
-
-
-http_sender(start, #sender_acc{req = Req, error_acc = ErrorAcc} = SAcc) ->
-?LOG_DEBUG("http_sender: 1", []),
-    {ok, Resp} = couch_httpd:start_json_response(Req, 200, []),
-    couch_httpd:send_chunk(Resp, <<"{\"rows\":[">>),
-    case ErrorAcc of
-    [] ->
-        Acc = <<"\r\n">>;
-    _ ->
-        lists:foreach(
-            fun(Row) -> couch_httpd:send_chunk(Resp, [Row, <<",\r\n">>]) end,
-            lists:reverse(ErrorAcc)),
-        Acc = <<>>
-    end,
-    {ok, SAcc#sender_acc{resp = Resp, acc = Acc}};
-
-http_sender({start, RowCount}, #sender_acc{req = Req, error_acc = ErrorAcc} = SAcc) ->
-?LOG_DEBUG("http_sender: 2", []),
-    Start = io_lib:format(
-        "{\"total_rows\":~w,\"rows\":[", [RowCount]),
-    {ok, Resp} = couch_httpd:start_json_response(Req, 200, []),
-    couch_httpd:send_chunk(Resp, Start),
-    case ErrorAcc of
-    [] ->
-        Acc = <<"\r\n">>;
-    _ ->
-        lists:foreach(
-            fun(Row) -> couch_httpd:send_chunk(Resp, [Row, <<",\r\n">>]) end,
-            lists:reverse(ErrorAcc)),
-        Acc = <<>>
-    end,
-    {ok, SAcc#sender_acc{resp = Resp, acc = Acc, error_acc = []}};
-
-http_sender({row, Row}, #sender_acc{resp = Resp, acc = Acc} = SAcc) ->
-?LOG_DEBUG("http_sender: 3:~n~p", [Row]),
-    couch_httpd:send_chunk(Resp, [Acc, ?JSON_ENCODE(Row)]),
-    {ok, SAcc#sender_acc{acc = <<",\r\n">>}};
-
-http_sender(stop, #sender_acc{resp = Resp}) ->
-?LOG_DEBUG("http_sender: 4", []),
-    couch_httpd:send_chunk(Resp, <<"\r\n]}">>),
-    {ok, couch_httpd:end_json_response(Resp)};
-
-http_sender({error, Url, Reason}, #sender_acc{on_error = continue} = SAcc) ->
-?LOG_DEBUG("http_sender: 5", []),
-    #sender_acc{resp = Resp, error_acc = ErrorAcc, acc = Acc} = SAcc,
-    Row = {[
-        {<<"error">>, true}, {<<"from">>, rem_passwd(Url)},
-        {<<"reason">>, to_binary(Reason)}
-    ]},
-    case Resp of
-    nil ->
-        % we haven't started the response yet
-        ErrorAcc2 = [?JSON_ENCODE(Row) | ErrorAcc],
-        Acc2 = Acc;
-    _ ->
-        couch_httpd:send_chunk(Resp, [Acc, ?JSON_ENCODE(Row)]),
-        ErrorAcc2 = ErrorAcc,
-        Acc2 = <<",\r\n">>
-    end,
-    {ok, SAcc#sender_acc{error_acc = ErrorAcc2, acc = Acc2}};
-
-http_sender({error, Url, Reason}, #sender_acc{on_error = stop} = SAcc) ->
-?LOG_DEBUG("http_sender: 6", []),
-    #sender_acc{req = Req, resp = Resp, acc = Acc} = SAcc,
-    Row = {[
-        {<<"error">>, true}, {<<"from">>, rem_passwd(Url)},
-        {<<"reason">>, to_binary(Reason)}
-    ]},
-    case Resp of
-    nil ->
-        % we haven't started the response yet
-        Start = io_lib:format("{\"total_rows\":~w,\"rows\":[\r\n", [0]),
-        {ok, Resp2} = couch_httpd:start_json_response(Req, 200, []),
-        couch_httpd:send_chunk(Resp2, Start),
-        couch_httpd:send_chunk(Resp2, ?JSON_ENCODE(Row)),
-        couch_httpd:send_chunk(Resp2, <<"\r\n]}">>);
-    _ ->
-       Resp2 = Resp,
-       couch_httpd:send_chunk(Resp2, [Acc, ?JSON_ENCODE(Row)]),
-       couch_httpd:send_chunk(Resp2, <<"\r\n]}">>)
-    end,
-    {stop, Resp2}.
-
 
 %% Valid `spatial` example:
 %%
@@ -248,17 +127,6 @@ parse_spatial_name(Name) ->
         throw({bad_request, "A `spatial` property must have the shape"
             " `ddoc_name/spatial_name`."})
     end.
-
-
-validate_on_error_param(<<"continue">>) ->
-    continue;
-validate_on_error_param(<<"stop">>) ->
-    stop;
-validate_on_error_param(Value) ->
-    Msg = io_lib:format("Invalid value (`~s`) for the parameter `on_error`."
-        " It must be `continue` (default) or `stop`.", [to_binary(Value)]),
-    throw({bad_request, Msg}).
-
 
 rem_passwd(Url) ->
     ?l2b(couch_util:url_strip_password(Url)).

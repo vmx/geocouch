@@ -44,7 +44,7 @@ http_index_folder_req_details(#merged_view_spec{
         url = MergeUrl0, ejson_spec = EJson},
         #index_merge{conn_timeout = Timeout}, SpatialArgs) ->
     {ok, #httpdb{url = Url, ibrowse_options = Options} = Db} =
-        couch_view_merger:open_db(MergeUrl0, nil, Timeout),
+        couch_merger:open_db(MergeUrl0, nil, Timeout),
     MergeUrl = Url ++ spatial_qs(SpatialArgs),
     Headers = [{"Content-Type", "application/json"} | Db#httpdb.headers],
     {MergeUrl, post, Headers, ?JSON_ENCODE(EJson), Options};
@@ -53,12 +53,13 @@ http_index_folder_req_details(#simple_view_spec{
         database = DbUrl, ddoc_id = DDocId, view_name = SpatialName},
         #index_merge{conn_timeout = Timeout}, SpatialArgs) ->
     {ok, #httpdb{url = Url, ibrowse_options = Options}} =
-        couch_view_merger:open_db(DbUrl, nil, Timeout),
+        couch_merger:open_db(DbUrl, nil, Timeout),
     SpatialUrl = Url ++ ?b2l(DDocId) ++ "/_spatial/" ++ ?b2l(SpatialName) ++
         spatial_qs(SpatialArgs),
     {SpatialUrl, get, [], [], Options}.
 
 spatial_row_obj({{Key, error}, Value}) ->
+?LOG_DEBUG("spatial_merger: spatial_row_obj", []),
     {[{key, Key}, {error, Value}]};
 
 spatial_row_obj({{Bbox, DocId}, {Geom, Value}}) ->
@@ -122,9 +123,11 @@ make_spatial_fold_fun(Queue) ->
 
 % Counterpart to merge_map_views/6 in couch_view_merger
 merge_spatial(#merge_params{limit = 0} = Params) ->
+?LOG_DEBUG("merge_spatial, limit = 0", []),
     couch_merger:merge_indexes_no_limit(Params);
 
 merge_spatial(#merge_params{row_acc = []} = Params) ->
+?LOG_DEBUG("merge_spatial, row_acc= []", []),
     case couch_merger:merge_indexes_no_acc(
             Params, fun merge_spatial_min_row/2) of
     {params, Params2} ->
@@ -139,6 +142,7 @@ merge_spatial(Params) ->
     merge_spatial(Params2).
 
 merge_spatial_min_row(Params, MinRow) ->
+?LOG_DEBUG("merge_spatial_min_row", []),
     ok = couch_view_merger_queue:flush(Params#merge_params.queue),
     couch_merger:handle_skip(Params#merge_params{row_acc=[MinRow]}).
 
@@ -155,7 +159,8 @@ spatial_qs(SpatialArgs) ->
     true ->
         [];
     false ->
-        ["bbox=" ++ ?b2l(iolist_to_binary(io_lib:format("~p", [Bbox])))]
+%?LOG_DEBUG("bbox after parsing: ~p", [?b2l(iolist_to_binary(io_lib:format("~p", [Bbox])))]),
+        ["bbox=" ++ ?b2l(iolist_to_binary(lists:nth(2, hd(io_lib:format("~p", [Bbox])))))]
     end ++
     case Stale =:= DefSpatialArgs#spatial_query_args.stale of
     true ->
@@ -173,7 +178,7 @@ spatial_qs(SpatialArgs) ->
     true ->
         [];
     false ->
-        ["bounds=" ++ ?b2l(iolist_to_binary(io_lib:format("~p", [Bounds])))]
+        ["bounds=" ++ ?b2l(iolist_to_binary(lists:nth(2, hd(io_lib:format("~p", [Bounds])))))]
     end,
     case QsList of
     [] ->
