@@ -98,23 +98,13 @@ spatial_folder(Db, SpatialSpec, _MergeParams, SpatialArgs, Queue) ->
 
 
 get_spatial_index(Db, DDocDbName, DDocId, SpatialName, Stale) ->
-    GroupId = case DDocDbName of
-    nil ->
-        DDocDb = nil,
-        DDocId;
-    _ when is_binary(DDocDbName) ->
-        DDocDb = case couch_db:open_int(DDocDbName, []) of
-        {ok, DDocDb1} ->
-            DDocDb1;
-        {not_found, _} ->
-            throw(ddoc_db_not_found)
-        end,
-        {DDocDb, DDocId}
-    end,
+    GroupId = couch_merger:get_group_id(DDocDbName, DDocId),
     {ok, Index, _Group} = couch_spatial:get_spatial_index(Db, GroupId,
         SpatialName, Stale),
-    {DDocDb, Index}.
-
+    case GroupId of
+        {DDocDb, DDocId} -> {DDocDb, Index};
+        DDocId -> {nil, Index}
+    end.
 
 http_view_fold(object_start, Queue) ->
     ok = couch_view_merger_queue:queue(Queue, {row_count, 0}),
@@ -179,7 +169,7 @@ http_view_fold_queue_row({Props}, Queue) ->
 
 
 
-% Counterpart to  make_map_fold_fun/4 in couch_view_merger
+% Counterpart to make_map_fold_fun/4 in couch_view_merger
 make_spatial_fold_fun(Queue) ->
     fun({{_Bbox, _DocId}, {_Geom, _Value}}=Row, Acc) ->
         ok = couch_view_merger_queue:queue(Queue, Row),
