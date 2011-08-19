@@ -14,7 +14,7 @@
 
 %-export([query_spatial/2]).
 -export([parse_http_params/4, make_funs/5, get_skip_and_limit/1,
-    http_index_folder_req_details/3]).
+    http_index_folder_req_details/3, make_event_fun/2]).
 
 -include("couch_db.hrl").
 -include("couch_merger.hrl").
@@ -30,7 +30,7 @@ parse_http_params(Req, _DDoc, _IndexName, _Extra) ->
 % callback!
 make_funs(_Req, _DDoc, _IndexName, _IndexArgs, _IndexMergeParams) ->
     {nil, fun spatial_folder/5, fun merge_spatial/1,
-    fun(NumFolders, Callback, UserAcc) ->
+     fun(_NumFolders, Callback, UserAcc) ->
         {ok, UserAcc2} = Callback(start, UserAcc),
         couch_merger:collect_rows(fun spatial_row_obj/1, Callback, UserAcc2)
     end, nil}.
@@ -40,6 +40,13 @@ get_skip_and_limit(_SpatialArgs) ->
     % GeoCouch doesn't currently neither support skip, nor limit
     Defaults = #merge_params{},
     {Defaults#merge_params.skip, Defaults#merge_params.limit}.
+
+% callback!
+make_event_fun(_SpatialArgs, Queue) ->
+    fun(Ev) ->
+        %couch_view_merger:http_view_fold(Ev, map, Queue)
+        http_view_fold(Ev, Queue)
+    end.
 
 % callback!
 http_index_folder_req_details(#merged_view_spec{
@@ -69,69 +76,26 @@ spatial_row_obj({{Bbox, DocId}, {Geom, Value}}) ->
     {[{id, DocId}, {bbox, tuple_to_list(Bbox)}, {geometry, {[Geom]}},
         {value, Value}]}.
 
-
-% Counterpart to map_view_folder/6 in couch_view_merger
-spatial_folder(#simple_view_spec{database = <<"http://", _/binary>>} =
-        SpatialSpec, MergeParams, _UserCtx, SpatialArgs, Queue) ->
-    EventFun = make_event_fun(Queue),
-    couch_merger:http_index_folder(couch_spatial_merger, SpatialSpec,
-        MergeParams, SpatialArgs, Queue, EventFun);
-
-spatial_folder(#simple_view_spec{database = <<"https://", _/binary>>} =
-        SpatialSpec, MergeParams, _UserCtx, SpatialArgs, Queue) ->
-    EventFun = make_event_fun(Queue),
-    couch_merger:http_index_folder(couch_spatial_merger, SpatialSpec,
-        MergeParams, SpatialArgs, Queue, EventFun);
-
-spatial_folder(#merged_view_spec{} = SpatialSpec,
-                MergeParams, _UserCtx, SpatialArgs, Queue) ->
-    EventFun = make_event_fun(Queue),
-    couch_merger:http_index_folder(couch_spatial_merger, SpatialSpec,
-        MergeParams, SpatialArgs, Queue, EventFun);
-
-spatial_folder(SpatialSpec, _MergeParams, UserCtx, SpatialArgs, Queue) ->
+% Counterpart to map_view_folder/5 in couch_view_merger
+spatial_folder(Db, SpatialSpec, _MergeParams, SpatialArgs, Queue) ->
     #simple_view_spec{
-        database = DbName, ddoc_database = DDocDbName,
-        ddoc_id = DDocId, view_name = SpatialName
+        ddoc_database = DDocDbName, ddoc_id = DDocId, view_name = SpatialName
     } = SpatialSpec,
     #spatial_query_args{
         bbox = Bbox,
         bounds = Bounds,
         stale = Stale
     } = SpatialArgs,
-    case couch_db:open(DbName, [{user_ctx, UserCtx}]) of
-    {ok, Db} ->
-        try
-            FoldlFun = make_spatial_fold_fun(Queue),
-            {DDocDb, Index} = get_spatial_index(Db, DDocDbName, DDocId,
-                SpatialName, Stale),
-            {ok, RowCount} = couch_spatial:get_item_count(Index#spatial.fd,
-                Index#spatial.treepos),
-            ok = couch_view_merger_queue:queue(Queue, {row_count, RowCount}),
-            couch_spatial:fold(Index, FoldlFun, {undefined, ""}, Bbox, Bounds),
-            catch couch_db:close(DDocDb)
-        catch
-        {not_found, Reason} when Reason =:= missing; Reason =:= deleted ->
-            ok = couch_view_merger_queue:queue(
-                Queue, {error, ?LOCAL,
-                    couch_view_merger:ddoc_not_found_msg(DbName, DDocId)});
-        ddoc_db_not_found ->
-            ok = couch_view_merger_queue:queue(
-                Queue, {error, ?LOCAL,
-                    couch_view_merger:ddoc_not_found_msg(DDocDbName, DDocId)});
-        _Tag:Error ->
-            couch_view_merger_queue:queue(Queue,
-                {error, ?LOCAL, couch_util:to_binary(Error)})
-        after
-            ok = couch_view_merger_queue:done(Queue),
-            couch_db:close(Db)
-        end;
-    {not_found, _} ->
-        ok = couch_view_merger_queue:queue(
-               Queue, {error, ?LOCAL,
-                   couch_view_merger:db_not_found_msg(DbName)}),
-        ok = couch_view_merger_queue:done(Queue)
-    end.
+    FoldlFun = make_spatial_fold_fun(Queue),
+    {DDocDb, Index} = get_spatial_index(Db, DDocDbName, DDocId,
+        SpatialName, Stale),
+    % The spatial index doesn't output a total_rows property, hence
+    % we don't need a proper row_count (but we need it in the queue to
+    % make the index merging work correctly)
+    ok = couch_view_merger_queue:queue(Queue, {row_count, 0}),
+    couch_spatial:fold(Index, FoldlFun, {undefined, ""}, Bbox, Bounds),
+    catch couch_db:close(DDocDb).
+
 
 get_spatial_index(Db, DDocDbName, DDocId, SpatialName, Stale) ->
     GroupId = case DDocDbName of
@@ -151,12 +115,6 @@ get_spatial_index(Db, DDocDbName, DDocId, SpatialName, Stale) ->
         SpatialName, Stale),
     {DDocDb, Index}.
 
-
-make_event_fun(Queue) ->
-    fun(Ev) ->
-        %couch_view_merger:http_view_fold(Ev, map, Queue)
-        http_view_fold(Ev, Queue)
-    end.
 
 http_view_fold(object_start, Queue) ->
     ok = couch_view_merger_queue:queue(Queue, {row_count, 0}),
