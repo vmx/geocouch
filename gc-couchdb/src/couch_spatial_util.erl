@@ -179,7 +179,8 @@ validate_args(Args) ->
     #spatial_args{
         bbox = Bbox,
         bounds = Bounds,
-        range = Range
+        range = Range,
+        geometry = Geometry
     } = Args,
 
     % In case a 'bbox` is given, the value of `bbox` will be stored in `range`
@@ -197,6 +198,25 @@ validate_args(Args) ->
         throw({query_parse_error, Msg})
     end,
 
+    case Bbox =/= nil andalso Geometry =/= nil of
+    false ->
+        ok;
+    true ->
+        Msg2 = <<"A bounding box *and* a geometry were specified."
+                " Please use either of them.">>,
+        throw({query_parse_error, Msg2})
+    end,
+
+    % In case a geometry was specified, we need to calculate the bounding box
+    % of it to add it to the range. Currently it is expected that the first
+    % two dimensions of the index belong to the geometry if there is any.
+    Range3 = case Geometry of
+    nil ->
+        Range2;
+    {Type, Coords} ->
+        couch_spatial_updater:extract_bbox(Type, Coords) ++ Range2
+    end,
+
     case Bbox =:= nil orelse
         length(Bbox) == 2 of
     true ->
@@ -204,10 +224,10 @@ validate_args(Args) ->
         % Coordinates of the bounding box are flipped and no bounds for the
         % cartesian plane were set
         {[{W, E}, {S, N}], nil} when E < W; N < S ->
-            Msg2 = <<"Coordinates of the bounding box are flipped, but no "
+            Msg3 = <<"Coordinates of the bounding box are flipped, but no "
                     "bounds for the cartesian plane were specified "
                     "(use the `plane_bounds` parameter)">>,
-            parse_error(Msg2);
+            parse_error(Msg3);
         _ ->
             ok
         end;
@@ -233,7 +253,7 @@ validate_args(Args) ->
 
     Args#spatial_args{
         bbox = nil,
-        range = Range2
+        range = Range3
     }.
 
 

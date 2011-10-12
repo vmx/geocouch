@@ -102,6 +102,38 @@ couchTests.spatial_range = function(debug) {
           "(3rd dimension is open at the end)");
 
 
+  // Tests with geometry and querying with a geometry
+  var geom = "POLYGON((-20 0, 16 0, 16 25, -20 25, -20 0))";
+  range = {start: [6.4], end: [8.7]};
+  xhr = CouchDB.request("GET", url_pre + "withGeometry?" + rangeArgs(range)
+    + '&geometry=' + escape(geom));
+  TEquals(['2','3','4','5'], extract_ids(xhr.responseText),
+          "should return a subset of the geometries (geometry query) (a)");
+
+  geom = "POLYGON((-20 0, 16 0, -20 25, -20 0))";
+  range = {start: [6.4], end: [8.7]};
+  xhr = CouchDB.request("GET", url_pre + "withGeometry?" + rangeArgs(range)
+    + '&geometry=' + escape(geom));
+  TEquals(['2'], extract_ids(xhr.responseText),
+          "should return a subset of the geometries (geometry query) (b)");
+
+  range = {start: [null], end: [null]};
+  geom = "POLYGON((-17 0, 16 0, 16 25, -17 25, -17 0))";
+  xhr = CouchDB.request("GET", url_pre + "withGeometry?" + rangeArgs(range)
+    + '&geometry=' + escape(geom));
+  TEquals(['10','2','3','4','5'], extract_ids(xhr.responseText),
+          "should return a subset of the geometries (polygon query)" +
+          "(3rd dimension is a wildcard)");
+
+  range = {start: [null], end: [null]};
+  geom = "LINESTRING(-17 0, 16 0, 16 25, -17 25)";
+  xhr = CouchDB.request("GET", url_pre + "withGeometry?" + rangeArgs(range)
+    + '&geometry=' + escape(geom));
+  TEquals(['5'], extract_ids(xhr.responseText),
+          "should return a subset of the geometries (linestring query)" +
+          "(3rd dimension is a wildcard)");
+
+
   // Tests without geometry
 
   range = {start: [3, 0, -10, 2], end: [10, 21, -9, 20]};

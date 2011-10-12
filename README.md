@@ -115,3 +115,4 @@ Then add the tests to `<path-to-couchdb-source>/share/www/script/couch_tests.js`
     loadTest("spatial_bugfixes.js");
     loadTest("spatial_offsets.js");
     loadTest("spatial_range.js");
+    loadTest("spatial_opensearch.js");

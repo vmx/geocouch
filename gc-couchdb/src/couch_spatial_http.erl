@@ -195,6 +195,8 @@ parse_qs(Key, Val, Args) ->
         Range ->
             Args#spatial_args{range=merge_range(Range, ?JSON_DECODE(Val))}
         end;
+    "geometry" ->
+        Args#spatial_args{geometry=wkt:parse(Val)};
     _ ->
         BKey = list_to_binary(Key),
         BVal = list_to_binary(Val),

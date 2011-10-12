@@ -57,6 +57,7 @@
     limit = 10000000000, % Huge number to simplify logic
     skip = 0,
     range = nil,
+    geometry=nil,
     extra,
     preflight_fun
 }).

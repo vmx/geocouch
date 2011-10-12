@@ -47,11 +47,30 @@ query_view_count(Db, DDoc, ViewName, Args) ->
     {ok, View, _, Args2} = couch_spatial_util:get_view(
         Db, DDoc, ViewName, Args),
 
-    case Args2#spatial_args.range of
+    #spatial_args{
+        range = Mbb,
+        geometry = QueryGeom0
+    } = Args2,
+    Vt = View#spatial.vtree,
+
+    case QueryGeom0 of
     nil ->
-        vtree_search:count_all(View#spatial.vtree);
-    Mbb ->
-        vtree_search:count_search(View#spatial.vtree, [Mbb])
+        case Mbb of
+        nil ->
+            vtree_search:count_all(Vt);
+        Mbb ->
+            vtree_search:count_search(Vt, [Mbb])
+        end;
+    QueryGeom0 ->
+        QueryGeom = erlgeom:to_geom(QueryGeom0),
+
+        FoldFun = fun(#kv_node{geometry=Geom}, Acc) ->
+            case condition_not_disjoint(QueryGeom, Geom) of
+                true -> {ok, Acc + 1};
+                false -> {ok, Acc}
+            end
+        end,
+        vtree_search:search(Vt, [Mbb], FoldFun, 0)
     end.
 
 
@@ -91,9 +110,7 @@ cleanup(Db) ->
 spatial_fold(View, Args, Callback, UserAcc) ->
     #spatial_args{
         limit = Limit,
-        skip = Skip,
-        bounds = Bounds,
-        range = Range
+        skip = Skip
     } = Args,
     Acc = #acc{
         limit = Limit,
@@ -102,19 +119,49 @@ spatial_fold(View, Args, Callback, UserAcc) ->
         user_acc = UserAcc,
         update_seq = View#spatial.update_seq
     },
-    Acc2 = fold(View, fun do_fold/2, Acc, Range, Bounds),
+    Acc2 = fold(View, fun do_fold/2, Acc, Args),
     finish_fold(Acc2, []).
 
 
-fold(Index, FoldFun, InitAcc, Mbb, Bounds) ->
-    WrapperFun = fun(Node, Acc) ->
-        % NOTE vmx 2012-11-28: in Apache CouchDB the body is stored as
-        %     Erlang terms
-        Value = binary_to_term(Node#kv_node.body),
-        Expanded = couch_spatial_util:expand_dups(
-            [Node#kv_node{body=Value}], []),
-        fold_fun(FoldFun, Expanded, Acc)
+fold(Index, FoldFun, InitAcc, Args) ->
+    #spatial_args{
+        bounds = Bounds,
+        range = Mbb,
+        geometry = QueryGeom0
+    } = Args,
+
+    % XXX vmx 2012-12-12: The whole tree folding should be reworked,
+    %    there are way too many nested fold functions.
+    WrapperFun = case QueryGeom0 of
+    nil ->
+        fun(Node, Acc) ->
+            % NOTE vmx 2012-11-28: in Apache CouchDB the body is stored as
+            %     Erlang terms
+            Value = binary_to_term(Node#kv_node.body),
+            Expanded = couch_spatial_util:expand_dups(
+                [Node#kv_node{body=Value}], []),
+            fold_fun(FoldFun, Expanded, Acc)
+        end;
+    QueryGeom0 ->
+        QueryGeom = erlgeom:to_geom(QueryGeom0),
+        fun(Node, Acc) ->
+            % NOTE vmx 2012-11-28: in Apache CouchDB the body is stored as
+            %     Erlang terms
+            Value = binary_to_term(Node#kv_node.body),
+            Expanded = couch_spatial_util:expand_dups(
+                [Node#kv_node{body=Value}], []),
+            Filtered = lists:filter(fun(N) ->
+                case N#kv_node.geometry of
+                nil ->
+                    true;
+                Geom ->
+                    condition_not_disjoint(QueryGeom, Geom)
+                end
+            end, Expanded),
+            fold_fun(FoldFun, Filtered, Acc)
+        end
     end,
+
     case Mbb of
     nil ->
         vtree_search:all(Index#spatial.vtree, WrapperFun, InitAcc);
@@ -203,3 +250,11 @@ finish_fold(Acc, _ExtraMeta) ->
 
 make_meta(UpdateSeq, Base) ->
     {meta, Base ++ [{update_seq, UpdateSeq}]}.
+
+
+% Include the geometries (hence return true) if they are not disjoint
+% The `QueryGeom` is already converted to an Erlgeom geometry. The `Geom` is
+% still an Erlang term
+condition_not_disjoint(QueryGeom, Geom) ->
+    Geom2 = erlgeom:to_geom(Geom),
+    not erlgeom:disjoint(QueryGeom, Geom2).
