@@ -10,6 +10,9 @@ A working installation of CouchDB with corresponding source
 code. GeoCouch works best with Couchbase and the latest stable releases of
 CouchDB (should be >= 1.1.0).
 
+If you want to use the geometry search, you also need to have GEOS [1]
+installed on your system.
+
 ### Understanding the branches:
 
 This repository contains several branches, please make sure you use
@@ -28,6 +31,10 @@ Installation
 
     git clone https://github.com/couchbase/geocouch.git
     cd geocouch
+
+### Get dependencies for geometry search
+
+    ./rebar get-deps
 
 ### Compilation
 
@@ -72,14 +79,16 @@ Add the test to `<vanilla-couch>/share/www/script/couch_tests.js`
 ### Run CouchDB with GeoCouch
 
 The compiled beam files from GeoCouch need to be in Erlang's path,
-which can be set with the `ERL_FLAGS` environment variable:
+which can be set with the `ERL_FLAGS` environment variable. As GeoCouch
+has additional dependencies (Wkt and Erlgeom) you need to include those
+in the path as well:
 
-    export ERL_FLAGS="-pa <geocouch>/ebin"
+    export ERL_FLAGS="-pa <geocouch>/ebin -pa <geocouch>/deps/wkt/ebin -pa <geocouch>/deps/erlgeom/ebin"
 
 If you run a dev instance with CouchDB's `./utils/run` you can also
 define it on startup:
 
-    ERL_FLAGS="-pa <geocouch>/ebin" <vanilla-couch>/utils/run
+    ERL_FLAGS="-pa <geocouch>/ebin -pa <geocouch>/deps/wkt/ebin -pa <geocouch>/deps/erlgeom/ebin" <vanilla-couch>/utils/run
 
 
 Using GeoCouch
@@ -210,7 +219,7 @@ Geometry search
 ---------------
 
 The most common geometry search is probably polygon search, though all
-geometries as specified in the OpenSearch Geo (Draft 2) Specification [1]
+geometries as specified in the OpenSearch Geo (Draft 2) Specification [2]
 ((Multi)Point, (Multi)LineString, (Multi)Polygon) are supported.
 
 Here's an example request with a polygon, spaces are encoded as "+".
@@ -284,4 +293,5 @@ Document use the the `_info` handler:
 References
 ----------
 
-[1] http://www.opensearch.org/Specifications/OpenSearch/Extensions/Geo/1.0/Draft_2
+[1] http://trac.osgeo.org/geos
+[2] http://www.opensearch.org/Specifications/OpenSearch/Extensions/Geo/1.0/Draft_2
