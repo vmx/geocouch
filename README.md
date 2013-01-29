@@ -43,6 +43,12 @@ For Apache CouchDB
 
 This version of GeoCouch needs at least Apache CouchDB 1.3.x.
 
+### Other Dependencies
+
+    autoconf-archive
+    geos
+    ebin (or adjust Makefile do-check)
+    
 
 ### Checkout the code
 
@@ -72,7 +78,7 @@ After that you can compile GeoCouch from within the GeoCouch directory:
 
 Now copy the configuration file into your Apache CouchDB directory:
 
-    cp etc/couchdb/default.d/geocouch.ini <path-to-couchdb-source>/etc/couchdb/default.d/
+    cp gc-couchdb/etc/couchdb/default.d/geocouch.ini <path-to-couchdb-source>/etc/couchdb/default.d/
 
 
 ### Running tests
@@ -116,3 +122,10 @@ Then add the tests to `<path-to-couchdb-source>/share/www/script/couch_tests.js`
     loadTest("spatial_offsets.js");
     loadTest("spatial_range.js");
     loadTest("spatial_opensearch.js");
+
+###### Note
+
+If all JavaScript tests fail, you may need to:
+
+     make couchdb
+
